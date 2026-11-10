@@ -55,6 +55,13 @@ def strip_email_quotes(text):
     return result if result else text
 
 
+def make_ticket_url(ticket_id, fallback=""):
+    """에이전트 화면 직행 링크 (이미 로그인된 브라우저면 바로 열림)"""
+    if ticket_id:
+        return f"https://{FRESHDESK_DOMAIN}.freshdesk.com/a/tickets/{ticket_id}"
+    return fallback
+
+
 def freshdesk_headers():
     credentials = base64.b64encode(f"{FRESHDESK_API_KEY}:X".encode()).decode()
     return {"Authorization": f"Basic {credentials}"}
@@ -430,7 +437,7 @@ def freshdesk_webhook():
         description = fw.get("ticket_description", fw.get("description_text", ""))
         priority    = str(fw.get("ticket_priority", fw.get("priority", "2")))
         status      = str(fw.get("ticket_status", fw.get("status", "2")))
-        ticket_url  = fw.get("ticket_url", "")
+        ticket_url  = make_ticket_url(str(fw.get("ticket_id", "")), fw.get("ticket_url", ""))
         company     = fw.get("ticket_company", "")
 
         description = strip_html(description)
@@ -481,7 +488,7 @@ def freshdesk_create_webhook():
         description = fw.get("ticket_description", fw.get("description_text", ""))
         priority    = str(fw.get("ticket_priority", fw.get("priority", "2")))
         status      = str(fw.get("ticket_status", fw.get("status", "2")))
-        ticket_url  = fw.get("ticket_url", "")
+        ticket_url  = make_ticket_url(str(fw.get("ticket_id", "")), fw.get("ticket_url", ""))
         company     = fw.get("ticket_company", "")
 
         description = strip_html(description)
