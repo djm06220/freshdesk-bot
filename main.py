@@ -55,6 +55,13 @@ def strip_email_quotes(text):
     return result if result else text
 
 
+def make_ticket_url(ticket_id, fallback=""):
+    """에이전트 화면 직행 링크 (이미 로그인된 브라우저면 바로 열림)"""
+    if ticket_id:
+        return f"https://{FRESHDESK_DOMAIN}.freshdesk.com/a/tickets/{ticket_id}"
+    return fallback
+
+
 def freshdesk_headers():
     credentials = base64.b64encode(f"{FRESHDESK_API_KEY}:X".encode()).decode()
     return {"Authorization": f"Basic {credentials}"}
@@ -266,8 +273,6 @@ def build_message_with_summary(summary, ticket_id, ticket_url, subject="", compa
         f"{part_emoji} 파트: {summary.get('담당파트', '-')}",
     ]
     lines = [l for l in lines if l is not None]
-    if ticket_url:
-        lines += ["", f"🔗 {ticket_url}"]
     return "\n".join(lines)
 
 
@@ -284,8 +289,6 @@ def build_message_without_summary(subject, description, ticket_id, ticket_url, p
         f"📊 상태: {STATUS_KO.get(str(status), status)}",
     ]
     lines = [l for l in lines if l is not None]
-    if ticket_url:
-        lines += ["", f"🔗 {ticket_url}"]
     return "\n".join(lines)
 
 
@@ -306,8 +309,6 @@ def build_create_message(summary, ticket_id, ticket_url, subject="", company="")
         f"{dept_emoji} 담당: {summary.get('담당부서', '-')}",
     ]
     lines = [l for l in lines if l is not None]
-    if ticket_url:
-        lines += ["", f"🔗 {ticket_url}"]
     return "\n".join(lines)
 
 
@@ -345,13 +346,28 @@ def summarize_new_ticket(subject, description, priority, status):
         return None
 
 
-def send_telegram(message):
+def send_telegram(message, button_url=None):
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
+    if button_url:
+        payload["reply_markup"] = {
+            "inline_keyboard": [[{"text": "🔗 티켓 열기", "url": button_url}]]
+        }
     res = requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-        json={"chat_id": TELEGRAM_CHAT_ID, "text": message},
+        json=payload,
         timeout=10,
     )
-    return res.json().get("ok", False)
+    ok = res.json().get("ok", False)
+    if not ok and button_url:
+        # 버튼 전송 실패 시 링크를 본문에 넣어 재시도 (알림 누락 방지)
+        log(f"[텔레그램] 버튼 전송 실패, 텍스트 링크로 재시도: {res.text[:150]}")
+        res = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": TELEGRAM_CHAT_ID, "text": f"{message}\n\n🔗 {button_url}"},
+            timeout=10,
+        )
+        ok = res.json().get("ok", False)
+    return ok
 
 
 def send_telegram_to(chat_id, message):
@@ -430,7 +446,7 @@ def freshdesk_webhook():
         description = fw.get("ticket_description", fw.get("description_text", ""))
         priority    = str(fw.get("ticket_priority", fw.get("priority", "2")))
         status      = str(fw.get("ticket_status", fw.get("status", "2")))
-        ticket_url  = fw.get("ticket_url", "")
+        ticket_url  = make_ticket_url(str(fw.get("ticket_id", "")), fw.get("ticket_url", ""))
         company     = fw.get("ticket_company", "")
 
         description = strip_html(description)
@@ -456,7 +472,7 @@ def freshdesk_webhook():
             mode = "raw"
 
         log(f"텔레그램 발송 모드: {mode}")
-        ok = send_telegram(message)
+        ok = send_telegram(message, ticket_url)
         log(f"텔레그램 발송 결과: {'성공' if ok else '실패'}")
         return jsonify({"status": "ok" if ok else "telegram_failed", "mode": mode}), 200
 
@@ -481,7 +497,7 @@ def freshdesk_create_webhook():
         description = fw.get("ticket_description", fw.get("description_text", ""))
         priority    = str(fw.get("ticket_priority", fw.get("priority", "2")))
         status      = str(fw.get("ticket_status", fw.get("status", "2")))
-        ticket_url  = fw.get("ticket_url", "")
+        ticket_url  = make_ticket_url(str(fw.get("ticket_id", "")), fw.get("ticket_url", ""))
         company     = fw.get("ticket_company", "")
 
         description = strip_html(description)
@@ -501,7 +517,7 @@ def freshdesk_create_webhook():
             mode = "raw"
 
         log(f"신규 티켓 발송 모드: {mode}")
-        ok = send_telegram(message)
+        ok = send_telegram(message, ticket_url)
         log(f"텔레그램 발송 결과: {'성공' if ok else '실패'}")
         return jsonify({"status": "ok" if ok else "telegram_failed", "mode": mode}), 200
 
